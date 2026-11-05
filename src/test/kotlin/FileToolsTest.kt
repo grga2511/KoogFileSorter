@@ -2,7 +2,6 @@ import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldStartWith
-import java.nio.file.FileAlreadyExistsException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.Comparator
@@ -101,20 +100,27 @@ class FileToolsTest : FunSpec() {
             Files.readString(destination) shouldBe "Project meeting notes."
         }
 
-        test("moveFile - preserves both files when the destination exists") {
+        test("moveFile - sends duplicate names to review without overwriting") {
             val source = workspace.inbox.resolve("notes.txt")
             val destination = workspace.directoryFor(FileCategory.DOCUMENTS)
                 .resolve("notes.txt")
+            val reviewDirectory = workspace.directoryFor(FileCategory.REVIEW)
 
             Files.writeString(source, "New content.")
             Files.writeString(destination, "Existing content.")
 
-            shouldThrow<FileAlreadyExistsException> {
-                fileTools.moveFile("notes.txt", "DOCUMENTS")
-            }
+            fileTools.moveFile("notes.txt", "DOCUMENTS")
 
-            Files.readString(source) shouldBe "New content."
+            Files.exists(source) shouldBe false
             Files.readString(destination) shouldBe "Existing content."
+
+            val reviewFiles = Files.list(reviewDirectory).use { it.toList() }
+            reviewFiles.size shouldBe 1
+
+            val reviewedFile = reviewFiles.single()
+            reviewedFile.fileName.toString() shouldStartWith "notes-"
+            reviewedFile.fileName.toString().endsWith(".txt") shouldBe true
+            Files.readString(reviewedFile) shouldBe "New content."
         }
 
         test("moveFile - rejects an unsupported category") {

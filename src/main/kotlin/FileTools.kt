@@ -6,6 +6,8 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
+import java.nio.file.FileAlreadyExistsException
+import java.util.UUID
 
 class FileTools(
     private val workspace: SorterWorkspace
@@ -49,6 +51,8 @@ class FileTools(
         "Move an inbox file into a category folder. " +
                 "Allowed categories: DOCUMENTS, CODE, CONFIGURATIONS, OTHER, REVIEW. " +
                 "Use REVIEW when classification is uncertain or reading failed. " +
+                "If the destination file already exists, the incoming file is " +
+                "automatically moved to REVIEW with a unique name. " +
                 "Existing files are never overwritten."
     )
     fun moveFile(
@@ -71,8 +75,40 @@ class FileTools(
 
         val destination = destinationDirectory.resolve(source.fileName)
 
-        // No REPLACE_EXISTING: a name collision must not overwrite a file.
-        Files.move(source, destination)
+        try {
+            Files.move(source, destination)
+        } catch (e: FileAlreadyExistsException) {
+            val reviewDirectory = workspace.directoryFor(FileCategory.REVIEW)
+            validateDirectory(reviewDirectory)
+
+            val originalName = source.fileName.toString()
+            val extensionIndex = originalName.lastIndexOf('.')
+
+            val baseName = if (extensionIndex > 0) {
+                originalName.substring(0, extensionIndex)
+            } else {
+                originalName
+            }
+
+            val extension = if (extensionIndex > 0) {
+                originalName.substring(extensionIndex)
+            } else {
+                ""
+            }
+
+            val reviewName = "$baseName-${UUID.randomUUID()}$extension"
+            val reviewDestination = reviewDirectory.resolve(reviewName)
+
+            Files.move(source, reviewDestination)
+
+            logger.warn(
+                "Destination already exists. Moved {} to review as {}",
+                fileName,
+                reviewName
+            )
+
+            return "Destination already exists. Moved $fileName to review as $reviewName."
+        }
 
         logger.info(
             "Moved file: {} -> {}",
@@ -106,12 +142,15 @@ class FileTools(
             "Input must be a regular file, not a directory or symbolic link."
         }
 
-        require(source.toRealPath().parent == workspace.inbox.toRealPath()) {
+        require(
+            source.toRealPath().parent == workspace.inbox.toRealPath()
+        ) {
             "File resolves outside inbox."
         }
 
         return source
     }
+
 
     private fun validateDirectory(directory: Path) {
         require(Files.isDirectory(directory, NOFOLLOW_LINKS)) {
